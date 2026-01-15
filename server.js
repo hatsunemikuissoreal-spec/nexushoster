@@ -8,7 +8,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// In-memory storage for bot instances
 const bots = {}; 
 const AI_AUTH_PASSWORD = "my-discord-bot";
 
@@ -29,7 +28,6 @@ app.post('/api/bots/connect', async (req, res) => {
             partials: [Partials.Channel, Partials.Message, Partials.User]
         });
 
-        // Updated to clientReady to fix the DeprecationWarning
         client.on('clientReady', () => {
             console.log(`[DEBUG] ${client.user.tag} is now online and ready.`);
         });
@@ -46,47 +44,52 @@ app.post('/api/bots/connect', async (req, res) => {
             if (!isDM && !settings.respondWithoutPings && !isMentioned) return;
 
             try {
-                console.log("[DEBUG] Fetching AI response with X-Auth...");
+                console.log("[DEBUG] Fetching AI response...");
                 
-                // Constructing the URL with the prompt and system prompt as a query parameter
-                const apiUrl = `https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(message.content)}`;
+                // The URL requires the prompt in the path. 
+                // We add the system prompt as a query parameter or inside the prompt itself.
+                const promptWithSystem = `System: ${systemPrompt}\nUser: ${message.content}`;
+                const apiUrl = `https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(promptWithSystem)}`;
                 
                 const response = await axios.get(apiUrl, {
                     headers: { 
                         'X-Auth': AI_AUTH_PASSWORD,
-                        'Content-Type': 'application/json'
+                        'Accept': 'application/json',
+                        // Ngrok often blocks "headless" requests with a 403/404 unless a User-Agent is present
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                     },
-                    params: { 
-                        prompt: systemPrompt // Passing the system prompt context
-                    },
-                    timeout: 15000 
+                    timeout: 20000 
                 });
 
+                // Check for response in multiple possible formats
+                let replyText = "";
                 if (response.data && response.data.reply) {
-                    await message.reply(response.data.reply);
-                    console.log("[DEBUG] Reply sent successfully.");
+                    replyText = response.data.reply;
                 } else if (typeof response.data === 'string') {
-                    // Fallback if the API returns a raw string instead of a JSON object
-                    await message.reply(response.data);
-                    console.log("[DEBUG] Raw string reply sent.");
+                    replyText = response.data;
+                } else if (response.data && response.data.response) {
+                    replyText = response.data.response;
+                }
+
+                if (replyText) {
+                    await message.reply(replyText);
+                    console.log("[DEBUG] Reply sent successfully.");
                 } else {
-                    console.log("[DEBUG] AI API returned empty response.");
+                    console.log("[DEBUG] AI API returned no recognizable text content.");
                 }
             } catch (err) {
                 console.error(`[ERROR] AI API Failure (Status: ${err.response?.status}):`, err.message);
                 if (err.response?.status === 403) {
-                    console.log("[DEBUG] 403 Forbidden: Check if the ngrok URL is active or if the X-Auth password 'my-discord-bot' is correct on the receiver side.");
+                    console.log("[DEBUG] Still Getting 403. This means 'my-discord-bot' is being rejected by the ngrok host.");
                 }
             }
         });
 
         await client.login(token);
 
-        // 48-hour limit logic
         const expiryDate = Date.now() + (2 * 24 * 60 * 60 * 1000);
         const timeout = setTimeout(() => {
             if (bots[botId]) {
-                console.log(`[DEBUG] Auto-stopping bot ${botId} (48h limit reached)`);
                 bots[botId].client.destroy();
                 delete bots[botId];
             }
@@ -101,5 +104,5 @@ app.post('/api/bots/connect', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Render uses 10000
 app.listen(PORT, () => console.log(`Backend Active on Port ${PORT}`));
