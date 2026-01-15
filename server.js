@@ -1,120 +1,104 @@
 const express = require('express');
-const cors = require('cors');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const axios = require('axios');
+const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const fetch = require('node-fetch');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
-// In-memory storage (tokens are kept here, never sent back to frontend)
-const bots = new Map(); 
-const botMetadata = new Map(); // Non-sensitive info for the UI
+// In-memory storage for bot instances and configurations
+const bots = {}; 
+const AI_AUTH_PASSWORD = "my-discord-bot"; // X-Auth header value
 
-const AUTH_PASSWORD = "my-discord-bot";
-const GPT_API_BASE = "https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/";
-const MAX_RUNTIME_MS = 2 * 24 * 60 * 60 * 1000; // 2 Days limit
+app.post('/api/bots/connect', async (req, res) => {
+    const { token, systemPrompt, settings } = req.body;
 
-// Helper: AI Response Logic
-async function getAIResponse(prompt, userMessage) {
+    if (!token || !systemPrompt) {
+        return res.status(400).json({ error: "Missing token or system prompt." });
+    }
+
     try {
-        const encodedPrompt = encodeURIComponent(`${prompt}\nUser: ${userMessage}`);
-        const response = await fetch(`${GPT_API_BASE}${encodedPrompt}`, {
-            headers: { 'X-Auth': AUTH_PASSWORD }
+        const botId = uuidv4();
+        const client = new Client({
+            intents: [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages,
+                GatewayIntentBits.MessageContent,
+                GatewayIntentBits.DirectMessages
+            ],
+            partials: [Partials.Channel]
         });
-        return await response.text();
-    } catch (err) {
-        return "System Error: Unable to reach the AI core.";
-    }
-}
 
-// Bot Instance Management
-async function createBotInstance(id, config) {
-    const client = new Client({
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.DirectMessages
-        ],
-        partials: [Partials.Channel]
-    });
+        client.on('messageCreate', async (message) => {
+            if (message.author.bot) return;
 
-    client.on('messageCreate', async (message) => {
-        if (message.author.bot) return;
+            const isDM = !message.guild;
+            const isMentioned = message.mentions.has(client.user);
+            
+            // Setting: Respond to DMs
+            if (isDM && !settings.respondDMs) return;
+            
+            // Setting: Respond without pings (In servers)
+            if (!isDM && !settings.respondWithoutPings && !isMentioned) return;
 
-        const isDM = !message.guild;
-        const isMentioned = message.mentions.has(client.user);
-        
-        let shouldRespond = false;
-        if (isDM && config.settings.respondDMs) shouldRespond = true;
-        if (!isDM && (config.settings.respondNoPing || isMentioned)) shouldRespond = true;
+            try {
+                // Call the AI API
+                const response = await axios.get(`https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(message.content)}`, {
+                    headers: { 'X-Auth': AI_AUTH_PASSWORD },
+                    params: { system: systemPrompt }
+                });
 
-        if (shouldRespond) {
-            message.channel.sendTyping();
-            const reply = await getAIResponse(config.systemPrompt, message.content);
-            message.reply(reply || "...");
-        }
-    });
+                if (response.data && response.data.reply) {
+                    message.reply(response.data.reply);
+                }
+            } catch (err) {
+                console.error("AI Error:", err.message);
+            }
+        });
 
-    try {
-        await client.login(config.token);
-        
-        // Auto-shutdown after 2 days
+        await client.login(token);
+
+        // Auto-shutdown after 48 hours (Discord Rules compliance & resource management)
+        const expiryDate = Date.now() + (2 * 24 * 60 * 60 * 1000);
         const timeout = setTimeout(() => {
-            stopBot(id);
-        }, MAX_RUNTIME_MS);
+            stopBot(botId);
+        }, 2 * 24 * 60 * 60 * 1000);
 
-        bots.set(id, { client, timeout, startTime: Date.now() });
-        botMetadata.set(id, { ...config, token: "[HIDDEN]", status: "online", startTime: Date.now() });
-        return { success: true };
-    } catch (err) {
-        return { success: false, error: err.message };
+        bots[botId] = {
+            client,
+            token,
+            systemPrompt,
+            settings,
+            status: 'online',
+            expiryDate,
+            timeout
+        };
+
+        res.json({ success: true, botId, expiryDate });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
-}
+});
 
-function stopBot(id) {
-    const bot = bots.get(id);
-    if (bot) {
-        bot.client.destroy();
-        clearTimeout(bot.timeout);
-        bots.delete(id);
-        const meta = botMetadata.get(id);
-        if (meta) meta.status = "offline";
+function stopBot(botId) {
+    if (bots[botId]) {
+        bots[botId].client.destroy();
+        clearTimeout(bots[botId].timeout);
+        bots[botId].status = 'offline';
         return true;
     }
     return false;
 }
 
-// Routes
-app.post('/api/bots/connect', async (req, res) => {
-    const { token, systemPrompt, name, settings } = req.body;
-    if (!token || !systemPrompt) return res.status(400).json({ error: "Missing required fields" });
-
-    const id = uuidv4();
-    const result = await createBotInstance(id, { token, systemPrompt, name, settings });
-
-    if (result.success) {
-        res.json({ id, message: "Bot connected successfully" });
-    } else {
-        res.status(401).json({ error: result.error });
-    }
-});
-
-app.get('/api/bots', (req, res) => {
-    res.json(Array.from(botMetadata.entries()).map(([id, meta]) => ({ id, ...meta })));
-});
-
-app.post('/api/bots/:id/action', (req, res) => {
-    const { action } = req.body;
-    const { id } = req.params;
-
+app.post('/api/bots/action', (req, res) => {
+    const { botId, action } = req.body;
     if (action === 'stop') {
-        stopBot(id);
+        stopBot(botId);
         return res.json({ success: true });
     }
-    
     res.status(400).json({ error: "Invalid action" });
 });
 
