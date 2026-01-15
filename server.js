@@ -61,17 +61,21 @@ app.post('/api/bots/connect', async (req, res) => {
             try {
                 console.log("[DEBUG] Fetching AI response...");
                 
-                const promptWithSystem = `System Directive: ${systemPrompt}\nUser Message: ${message.content}`;
-                const apiUrl = `https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(promptWithSystem)}`;
+const promptWithSystem = `System Directive: ${systemPrompt}\nUser Message: ${message.content}`;
+const apiUrl = `https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(promptWithSystem)}`;
+
+const response = await axios.get(apiUrl, {
+    headers: { 
+        'X-Auth': AI_AUTH_PASSWORD,
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124',
+        'ngrok-skip-browser-warning': 'true'   // <-- this skips ngrok warning
+    },
+    timeout: 30000 
+});
+
+
                 
-                const response = await axios.get(apiUrl, {
-                    headers: { 
-                        'X-Auth': AI_AUTH_PASSWORD,
-                        'Accept': 'application/json',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124'
-                    },
-                    timeout: 30000 
-                });
 
                 let replyText = "";
                 if (response.data && response.data.reply) {
