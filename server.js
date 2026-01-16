@@ -1,128 +1,64 @@
 const express = require('express');
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const axios = require('axios');
+const nodemailer = require('nodemailer');
 const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
+const bodyParser = require('body-parser');
 
 const app = express();
-app.use(express.json());
 app.use(cors());
+app.use(bodyParser.json());
 
-// Global storage for bot instances
-const bots = {}; 
-const AI_AUTH_PASSWORD = "my-discord-bot";
+// --- MANUAL CONFIGURATION ---
+const MY_EMAIL = "moddy2232@gmail.com"; // Put your email here
+const APP_PASSWORD = "kdtx ovfm zzkc yndr"; // Put your gmail app password here
+// ----------------------------
 
-/**
- * Splits a string into chunks of a specified length without breaking words if possible.
- * Discord has a strict 2000 character limit per message.
- */
-function chunkMessage(text, size = 1900) {
-    const chunks = [];
-    for (let i = 0; i < text.length; i += size) {
-        chunks.push(text.substring(i, i + size));
+// Mock Database (Replace with MongoDB/SQLite for persistence)
+const otps = new Map();
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: MY_EMAIL,
+        pass: APP_PASSWORD
     }
-    return chunks;
-}
+});
 
-app.post('/api/bots/connect', async (req, res) => {
-    const { token, systemPrompt, settings } = req.body;
+// Endpoint to initiate Login/Signup and send OTP
+app.post('/api/auth/init', async (req, res) => {
+    const { email, password, type } = req.body;
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    otps.set(email, { code, password });
 
-    if (!token) return res.status(400).json({ error: "No token provided." });
+    const mailOptions = {
+        from: `"Nexus Hoster" <${MY_EMAIL}>`,
+        to: email,
+        subject: 'Your Nexus Hoster Verification Code',
+        text: `Hey welcome to Nexus Hoster\nthis is an automated message from nexushoster\n\nYour code is\n\n${code}\n\nfrom nexushoster\n-qetoo`
+    };
 
     try {
-        const botId = uuidv4();
-        const client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent, 
-                GatewayIntentBits.DirectMessages,
-            ],
-            partials: [Partials.Channel, Partials.Message, Partials.User]
-        });
-
-        client.on('clientReady', () => {
-            console.log(`[DEBUG] ${client.user.tag} is now online and ready.`);
-        });
-
-        client.on('messageCreate', async (message) => {
-            // Safety: Ignore bots and check permissions
-            if (message.author.bot) return;
-
-            const isDM = !message.guild;
-            const isMentioned = message.mentions.has(client.user);
-            
-            console.log(`[DEBUG] Message from ${message.author.tag}: "${message.content}" (DM: ${isDM})`);
-
-            // Apply user settings
-            if (isDM && !settings.respondDMs) return;
-            if (!isDM && !settings.respondWithoutPings && !isMentioned) return;
-
-            try {
-                console.log("[DEBUG] Fetching AI response...");
-                
-const promptWithSystem = `System Directive: ${systemPrompt}\nUser Message: ${message.content}`;
-const apiUrl = `https://vulcanizable-nonbibulously-kamden.ngrok-free.dev/gpt120/${encodeURIComponent(promptWithSystem)}`;
-
-const response = await axios.get(apiUrl, {
-    headers: { 
-        'X-Auth': AI_AUTH_PASSWORD,
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124',
-        'ngrok-skip-browser-warning': 'true'   // <-- this skips ngrok warning
-    },
-    timeout: 30000 
-});
-
-
-                
-
-                let replyText = "";
-                if (response.data && response.data.reply) {
-                    replyText = response.data.reply;
-                } else if (typeof response.data === 'string') {
-                    replyText = response.data;
-                }
-
-                if (replyText) {
-                    // Split the message into chunks to bypass the 2000 char limit
-                    const messageChunks = chunkMessage(replyText);
-                    
-                    for (const content of messageChunks) {
-                        await message.reply(content);
-                    }
-                    console.log(`[DEBUG] Successfully sent reply in ${messageChunks.length} parts.`);
-                } else {
-                    console.log("[DEBUG] AI API returned no recognizable text.");
-                }
-            } catch (err) {
-                console.error(`[ERROR] AI API or Discord Failure:`, err.message);
-                if (err.response) {
-                    console.error(`[DEBUG] API Status: ${err.response.status}`);
-                }
-            }
-        });
-
-        await client.login(token);
-
-        // Enforce 48-hour hosting limit
-        const expiryDate = Date.now() + (2 * 24 * 60 * 60 * 1000);
-        const timeout = setTimeout(() => {
-            if (bots[botId]) {
-                console.log(`[DEBUG] 48h limit reached. Shutting down ${botId}`);
-                bots[botId].client.destroy();
-                delete bots[botId];
-            }
-        }, 2 * 24 * 60 * 60 * 1000);
-
-        bots[botId] = { client, expiryDate, timeout };
-        res.json({ success: true, botId, expiryDate });
-
+        await transporter.sendMail(mailOptions);
+        res.status(200).json({ success: true, message: "OTP Sent" });
     } catch (error) {
-        console.error("[ERROR] Login Failed:", error.message);
-        res.status(500).json({ error: "Login failed: " + error.message });
+        console.error(error);
+        res.status(500).json({ success: false, message: "Email failed to send" });
     }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Backend Active on Port ${PORT}`));
+// Pterodactyl Integration Mockup
+// In a real app, you'd use the Pterodactyl API (Application & Client)
+app.post('/api/server/create', async (req, res) => {
+    const { name, type, userId } = req.body;
+    
+    // Logic to call Pterodactyl API:
+    // 1. Create user on panel if not exists
+    // 2. Create server using correct Egg (Node or Python)
+    // 3. Return random password generated by Pterodactyl or manual 5-20 chars
+    
+    const panelPassword = Math.random().toString(36).slice(-12);
+    res.json({ success: true, password: panelPassword });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Nexus Hoster Backend running on port ${PORT}`));
