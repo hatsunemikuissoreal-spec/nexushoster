@@ -1,7 +1,7 @@
 {
-  "name": "nexus-hoster-api",
+  "name": "nexus-hoster",
   "version": "1.0.0",
-  "description": "Nexus Hoster Discord Bot Hosting Backend",
+  "description": "Discord Bot Hosting Service",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,8 +9,6 @@
   "dependencies": {
     "express": "^4.18.2",
     "nodemailer": "^6.9.7",
-    "cors": "^2.8.5",
-    "body-parser": "^1.20.2",
-    "nodeactyl": "^3.3.0"
+    "crypto": "^1.0.1"
   }
 }
