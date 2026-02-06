@@ -1,14 +1,15 @@
 {
-  "name": "nexus-hoster",
+  "name": "discord-subdomain-backend",
   "version": "1.0.0",
-  "description": "Discord Bot Hosting Service",
+  "description": "Backend for Discord subdomain manager",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "nodemailer": "^6.9.7",
-    "crypto": "^1.0.1"
+    "node-fetch": "^3.3.2",
+    "pg": "^8.11.1"
   }
 }
