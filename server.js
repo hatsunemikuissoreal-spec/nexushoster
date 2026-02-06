@@ -56,6 +56,22 @@ async function waitForProject(subdomain, retries = 5, delay = 3000) {
 
 async function createPagesDeployment(subdomain, filename, content) {
   const projectName = subdomain;
+
+  // Add the required "manifest" field
+  const body = {
+    deployment: {
+      production: true,
+      files: {
+        [filename]: content
+      }
+    },
+    manifest: {
+      build: {},
+      site_name: projectName,
+      source: {}
+    }
+  };
+
   const deployResponse = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${projectName}/deployments`,
     {
@@ -64,9 +80,10 @@ async function createPagesDeployment(subdomain, filename, content) {
         "Authorization": `Bearer ${CF_API_TOKEN}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ files: { [filename]: content } })
+      body: JSON.stringify(body)
     }
   );
+
   return deployResponse.json();
 }
 
@@ -77,9 +94,7 @@ app.post("/subdomain/create", auth, async (req, res) => {
   if (!/^[a-z0-9-]{1,20}$/.test(subdomain))
     return res.json({ error: "INVALID_NAME" });
 
-  if (await subdomainExists(subdomain)) {
-    return res.json({ error: "SUBDOMAIN_TAKEN" });
-  }
+  if (await subdomainExists(subdomain)) return res.json({ error: "SUBDOMAIN_TAKEN" });
 
   db.run(
     "INSERT INTO subdomains (subdomain, domain, owner_discord_id) VALUES (?, ?, ?)",
@@ -99,8 +114,8 @@ app.post("/subdomain/create", auth, async (req, res) => {
           body: JSON.stringify({ name: subdomain, production_branch: "main" })
         }
       );
-      const projectData = await projectResponse.json();
 
+      const projectData = await projectResponse.json();
       if (!projectData.success) return res.json({ error: "FAILED_TO_CREATE_PROJECT" });
 
       // Wait until project is ready
