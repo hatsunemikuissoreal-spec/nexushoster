@@ -1,76 +1,90 @@
-const express = require('express');
-const nodemailer = require('nodemailer');
-const path = require('path');
-const crypto = require('crypto');
+import express from "express";
+import fetch from "node-fetch";
+import pg from "pg";
+
 const app = express();
-
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
 
-// --- CONFIGURATION (FILL THESE MANUALLY) ---
-const CONFIG = {
-    EMAIL: "moddy2232@gmail.com",
-    APP_PASSWORD: "kdtx ovfm zzkc yndr",
-    SITE_URL: "https://nexushoster.onrender.com"
-};
+// ================= CONFIG =================
+const CF_API_TOKEN = "bZEd1nz3QThFeDtDtpmirsgET_WGmSlmxDk9pwqg";
+const CF_ACCOUNT_ID = "2013991c6b28d4d548391ef49258dfbf";
+const CF_ZONE_ID = "e5cfbc422c65ab7f43c4b6520d70c2ec";
+const BACKEND_SECRET = "snowissofat.com";
 
-// In-memory store for OTPs (In production, use Redis or a DB)
-const otpStore = new Map();
+// ================= DATABASE =================
+const db = new pg.Pool({ connectionString: "postgres://user:password@localhost:5432/db" });
 
-// Email Transporter Setup
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: CONFIG.EMAIL,
-        pass: CONFIG.APP_PASSWORD
-    }
+(async () => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS subdomains (
+      id SERIAL PRIMARY KEY,
+      subdomain TEXT NOT NULL UNIQUE,
+      domain TEXT NOT NULL,
+      owner_discord_id TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+})();
+
+// ================= AUTH =================
+function auth(req, res, next) {
+  if (req.headers.authorization !== BACKEND_SECRET) {
+    return res.status(401).json({ error: "UNAUTHORIZED" });
+  }
+  next();
+}
+
+// ================= HELPERS =================
+async function subdomainExists(name) {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${name}.qetoo.online`,
+    { headers: { Authorization: `Bearer ${CF_API_TOKEN}` } }
+  );
+  const data = await res.json();
+  return data.result.length > 0;
+}
+
+// ================= ENDPOINTS =================
+app.post("/subdomain/create", auth, async (req, res) => {
+  const { subdomain, userId } = req.body;
+
+  if (!/^[a-z0-9-]{1,20}$/.test(subdomain)) return res.json({ error: "INVALID_NAME" });
+
+  try {
+    await db.query(
+      "INSERT INTO subdomains (subdomain, domain, owner_discord_id) VALUES ($1,$2,$3)",
+      [subdomain, "qetoo.online", userId]
+    );
+  } catch {
+    return res.json({ error: "SUBDOMAIN_TAKEN" });
+  }
+
+  if (await subdomainExists(subdomain)) {
+    await db.query("DELETE FROM subdomains WHERE subdomain=$1", [subdomain]);
+    return res.json({ error: "SUBDOMAIN_TAKEN" });
+  }
+
+  // Create Pages project
+  await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${CF_API_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name: subdomain, production_branch: "main" })
+  });
+
+  res.json({ success: true, fqdn: `${subdomain}.qetoo.online` });
 });
 
-/**
- * AUTH: Request OTP
- */
-app.post('/api/auth/request-otp', async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).send('Email required');
+app.post("/files/create", auth, async (req, res) => {
+  const { subdomain, filename, content } = req.body;
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore.set(email, { otp, expires: Date.now() + 600000 }); // 10 min expiry
+  // Placeholder: in production, this should deploy to Cloudflare Pages
+  console.log(`File update requested: ${subdomain}/${filename}`);
+  console.log("Content:", content);
 
-    const mailOptions = {
-        from: `"Nexus Hoster" <${CONFIG.EMAIL}>`,
-        to: email,
-        subject: 'Your Nexus Hoster Verification Code',
-        text: `Hey welcome to Nexus Hoster\nthis is an automated message from nexushoster\n\nYour code is\n\n${otp}\n\nfrom nexushoster\n-qetoo`
-    };
-
-    try {
-        await transporter.sendMail(mailOptions);
-        res.status(200).json({ message: 'OTP Sent' });
-    } catch (error) {
-        console.error("Email Error:", error);
-        res.status(500).send('Failed to send email');
-    }
+  res.json({ success: true });
 });
 
-/**
- * SERVER MANAGEMENT (Simulated Logic)
- */
-app.post('/api/server/create', (req, res) => {
-    // Generate a secure random password for the Pterodactyl account
-    const panelPassword = crypto.randomBytes(10).toString('hex'); // 20 chars
-    
-    // Logic would normally interface with Pterodactyl API here
-    // application.createUser(...)
-    // application.createServer(...)
-    
-    res.json({
-        success: true,
-        password: panelPassword,
-        panelUrl: "https://panel.nexushoster.onrender.com" // Placeholder
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Nexus Hoster running at ${CONFIG.SITE_URL}`);
-});
+app.listen(3000, () => console.log("Backend running on port 3000"));
