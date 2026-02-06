@@ -1,6 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
-import pg from "pg";
+import sqlite3 from "sqlite3";
 
 const app = express();
 app.use(express.json());
@@ -12,19 +12,16 @@ const CF_ZONE_ID = "e5cfbc422c65ab7f43c4b6520d70c2ec";
 const BACKEND_SECRET = "snowissofat.com";
 
 // ================= DATABASE =================
-const db = new pg.Pool({ connectionString: "postgres://user:password@localhost:5432/db" });
-
-(async () => {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS subdomains (
-      id SERIAL PRIMARY KEY,
-      subdomain TEXT NOT NULL UNIQUE,
-      domain TEXT NOT NULL,
-      owner_discord_id TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
-    )
-  `);
-})();
+const db = new sqlite3.Database("./subdomains.db");
+db.run(`
+  CREATE TABLE IF NOT EXISTS subdomains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subdomain TEXT UNIQUE,
+    domain TEXT,
+    owner_discord_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
 // ================= AUTH =================
 function auth(req, res, next) {
@@ -48,41 +45,41 @@ async function subdomainExists(name) {
 app.post("/subdomain/create", auth, async (req, res) => {
   const { subdomain, userId } = req.body;
 
-  if (!/^[a-z0-9-]{1,20}$/.test(subdomain)) return res.json({ error: "INVALID_NAME" });
+  if (!/^[a-z0-9-]{1,20}$/.test(subdomain))
+    return res.json({ error: "INVALID_NAME" });
 
-  try {
-    await db.query(
-      "INSERT INTO subdomains (subdomain, domain, owner_discord_id) VALUES ($1,$2,$3)",
-      [subdomain, "qetoo.online", userId]
-    );
-  } catch {
-    return res.json({ error: "SUBDOMAIN_TAKEN" });
-  }
+  db.run(
+    "INSERT INTO subdomains (subdomain, domain, owner_discord_id) VALUES (?, ?, ?)",
+    [subdomain, "qetoo.online", userId],
+    async function(err) {
+      if (err) return res.json({ error: "SUBDOMAIN_TAKEN" });
 
-  if (await subdomainExists(subdomain)) {
-    await db.query("DELETE FROM subdomains WHERE subdomain=$1", [subdomain]);
-    return res.json({ error: "SUBDOMAIN_TAKEN" });
-  }
+      if (await subdomainExists(subdomain)) {
+        db.run("DELETE FROM subdomains WHERE subdomain=?", [subdomain]);
+        return res.json({ error: "SUBDOMAIN_TAKEN" });
+      }
 
-  // Create Pages project
-  await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${CF_API_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ name: subdomain, production_branch: "main" })
-  });
+      // Create Cloudflare Pages project
+      await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CF_API_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: subdomain, production_branch: "main" })
+      });
 
-  res.json({ success: true, fqdn: `${subdomain}.qetoo.online` });
+      res.json({ success: true, fqdn: `${subdomain}.qetoo.online` });
+    }
+  );
 });
 
 app.post("/files/create", auth, async (req, res) => {
   const { subdomain, filename, content } = req.body;
 
-  // Placeholder: in production, this should deploy to Cloudflare Pages
-  console.log(`File update requested: ${subdomain}/${filename}`);
-  console.log("Content:", content);
+  // Placeholder: log content, can later integrate with Pages deploy
+  console.log(`File update: ${subdomain}/${filename}`);
+  console.log(content);
 
   res.json({ success: true });
 });
