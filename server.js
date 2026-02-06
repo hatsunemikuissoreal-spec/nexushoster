@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 // ================= CONFIG =================
-const CF_API_TOKEN = "bZEd1nz3QThFeDtDtpmirsgET_WGmSlmxDk9pwqg"; // your Cloudflare token here
+const CF_API_TOKEN = "bZEd1nz3QThFeDtDtpmirsgET_WGmSlmxDk9pwqg"; // your Cloudflare token
 const CF_ACCOUNT_ID = "2013991c6b28d4d548391ef49258dfbf";
 const CF_ZONE_ID = "e5cfbc422c65ab7f43c4b6520d70c2ec";
 const BACKEND_SECRET = "snowissofat.com"; // your secret string
@@ -41,10 +41,21 @@ async function subdomainExists(name) {
   return data.result.length > 0;
 }
 
+async function waitForProject(subdomain, retries = 5, delay = 3000) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${subdomain}`,
+      { headers: { Authorization: `Bearer ${CF_API_TOKEN}` } }
+    );
+    const data = await res.json();
+    if (data.success) return true;
+    await new Promise(r => setTimeout(r, delay));
+  }
+  return false;
+}
+
 async function createPagesDeployment(subdomain, filename, content) {
   const projectName = subdomain;
-
-  // Create a Pages deployment with a single file
   const deployResponse = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${projectName}/deployments`,
     {
@@ -53,12 +64,9 @@ async function createPagesDeployment(subdomain, filename, content) {
         "Authorization": `Bearer ${CF_API_TOKEN}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        files: { [filename]: content }
-      })
+      body: JSON.stringify({ files: { [filename]: content } })
     }
   );
-
   return deployResponse.json();
 }
 
@@ -93,9 +101,11 @@ app.post("/subdomain/create", auth, async (req, res) => {
       );
       const projectData = await projectResponse.json();
 
-      if (!projectData.success) {
-        return res.json({ error: "FAILED_TO_CREATE_PROJECT" });
-      }
+      if (!projectData.success) return res.json({ error: "FAILED_TO_CREATE_PROJECT" });
+
+      // Wait until project is ready
+      const ready = await waitForProject(subdomain);
+      if (!ready) return res.json({ error: "PROJECT_NOT_READY" });
 
       res.json({ success: true, fqdn: `${subdomain}.qetoo.online` });
     }
@@ -104,7 +114,6 @@ app.post("/subdomain/create", auth, async (req, res) => {
 
 app.post("/files/create", auth, async (req, res) => {
   const { subdomain, filename, content } = req.body;
-
   if (!subdomain || !filename || content === undefined)
     return res.status(400).json({ error: "MISSING_PARAMS" });
 
@@ -114,7 +123,7 @@ app.post("/files/create", auth, async (req, res) => {
       console.log(`File updated: ${subdomain}/${filename}`);
       return res.json({ success: true });
     } else {
-      console.error(deployResult);
+      console.error("DEPLOY_FAILED:", deployResult);
       return res.json({ error: "DEPLOY_FAILED" });
     }
   } catch (err) {
